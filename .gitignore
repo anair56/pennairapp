@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# ROS2 build outputs
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# reference solution video from the prompt, not ours
+Pennair 2024 Sample.mov
+# 102 MB, over GitHub's 100 MB limit (use Git LFS or grab it from the prompt doc)
+PennAir 2024 App Dynamic.mp4
+
+# challenge prompt, not part of the submission
+anoushka penn air app.pdf
