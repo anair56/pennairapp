@@ -14,7 +14,7 @@ import time
 
 import cv2
 
-from shape_detector import ShapeDetector, Tracker, CameraModel, draw
+from shape_detector import ShapeDetector, Tracker, CameraModel, TiltedPlaneCamera, draw
 
 
 def main():
@@ -22,6 +22,7 @@ def main():
     ap.add_argument('video')
     ap.add_argument('-o', '--output', help='write annotated video here (mp4)')
     ap.add_argument('--3d', dest='three_d', action='store_true', help='Part 4: print X/Y/Z in inches')
+    ap.add_argument('--tilt', action='store_true', help='Part 6: estimate ground-plane tilt from the circle (implies --3d)')
     ap.add_argument('--show', action='store_true', help='display live window')
     ap.add_argument('--max-frames', type=int, default=0, help='stop early (debug)')
     ap.add_argument('--proc-width', type=int, default=960, help='internal processing width')
@@ -39,7 +40,9 @@ def main():
 
     det = ShapeDetector(proc_width=args.proc_width)
     tracker = Tracker()
-    cam = CameraModel() if args.three_d else None
+    if args.tilt:
+        args.three_d = True
+    cam = TiltedPlaneCamera() if args.tilt else (CameraModel() if args.three_d else None)
 
     n, total_algo = 0, 0.0
     fps_smooth = None
@@ -57,7 +60,8 @@ def main():
         inst = 1.0 / max(dt, 1e-6)
         fps_smooth = inst if fps_smooth is None else 0.9 * fps_smooth + 0.1 * inst
 
-        draw(frame, dets, show_3d=args.three_d, fps=fps_smooth)
+        draw(frame, dets, show_3d=args.three_d, fps=fps_smooth,
+             hud=cam.hud() if args.tilt else None)
         if writer:
             writer.write(frame)
         if args.show:

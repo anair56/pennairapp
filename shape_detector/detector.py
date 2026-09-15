@@ -155,17 +155,41 @@ def _median_u8(img):
     return float(np.searchsorted(np.cumsum(hist), img.size / 2))
 
 
+def _densify(pts, step=3.0):
+    """Insert points along each polygon edge so there's one every ~step px."""
+    out = []
+    for i in range(len(pts)):
+        a, b = pts[i], pts[(i + 1) % len(pts)]
+        k = max(int(np.linalg.norm(b - a) / step), 1)
+        out.append(a + (b - a) * (np.arange(k) / k)[:, None])
+    return np.concatenate(out).astype(np.float32)
+
+
+def _ellipse_residual(contour):
+    """Mean |r - 1| of the contour points in the best-fit ellipse's own frame.
+    ~0.01 for a real ellipse, ~0.08 for a pentagon, worse for anything pointier."""
+    # contours are CHAIN_APPROX_SIMPLE (corners only), and an ellipse fits a
+    # rectangle's 4 corners perfectly, so resample the outline densely first
+    pts = _densify(contour.reshape(-1, 2).astype(np.float32))
+    (ex, ey), (w, h), ang = cv2.fitEllipse(pts)
+    if w < 1 or h < 1:
+        return 1.0
+    pts = pts - (ex, ey)
+    c, s_ = np.cos(np.radians(ang)), np.sin(np.radians(ang))
+    x = (pts[:, 0] * c + pts[:, 1] * s_) / (w / 2)
+    y = (-pts[:, 0] * s_ + pts[:, 1] * c) / (h / 2)
+    return float(np.mean(np.abs(np.hypot(x, y) - 1)))
+
+
 def classify(contour):
     """Very rough polygon classification, just for nicer labels."""
     peri = cv2.arcLength(contour, True)
-    area = cv2.contourArea(contour)
     if peri == 0:
         return 'unknown'
-    circularity = 4 * np.pi * area / (peri * peri)   # 1.0 for a perfect circle
+    if len(contour) >= 5 and _ellipse_residual(contour) < 0.04:
+        return 'circle'   # or an ellipse: a circle seen at an angle (Part 6) still counts
     approx = cv2.approxPolyDP(contour, 0.045 * peri, True)  # loose enough to ignore a rounded corner
     v = len(approx)
-    if circularity > 0.85 and v >= 6:
-        return 'circle'
     if v == 3:
         return 'triangle'
     if v == 4:

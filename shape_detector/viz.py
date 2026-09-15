@@ -14,7 +14,7 @@ def _put(img, text, org, scale=0.6):
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, TEXT, 1, cv2.LINE_AA)
 
 
-def draw(frame, dets, show_3d=False, fps=None):
+def draw(frame, dets, show_3d=False, fps=None, hud=None):
     out = frame  # draw in place; caller copies if it cares
     for d in dets:
         cv2.drawContours(out, [d.contour], -1, OUTLINE_OCCLUDED if d.occluded else OUTLINE, 3)
@@ -30,4 +30,6 @@ def draw(frame, dets, show_3d=False, fps=None):
             _put(out, f'({cx}, {cy})', (cx + 10, cy + 16), 0.55)
     if fps is not None:
         _put(out, f'{fps:.0f} fps (algo only)', (15, 30), 0.8)
+    if hud:
+        _put(out, hud, (15, 62), 0.7)
     return out
