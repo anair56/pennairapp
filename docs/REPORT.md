@@ -107,14 +107,6 @@ bogus radius); when the circle is off-screen the last Z is held. For these
 videos Z works out to ~247 in (gravel) and ~246 in (grass), i.e. about 20.5 ft,
 which is a plausible camera height.
 
-## Part 5 – ROS2
-
-`ros2_ws/src` has a message package and a Python package with `video_publisher`
-(video → `sensor_msgs/Image` on a timer, loops by default) and `detector_node`
-(image → `ShapeDetectionArray` + annotated image). The nodes import the same
-`shape_detector` package via a symlink so there's one copy of the algorithm.
-Written against the Jazzy docs but not built here (no ROS on this Mac).
-
 ## Part 6 – 3D on a tilted plane
 
 Extends Part 4 to a camera that isn't looking straight down: the circle's
