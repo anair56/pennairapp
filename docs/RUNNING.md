@@ -14,8 +14,17 @@ python detect_video.py "PennAir 2024 App Dynamic Hard.mp4" -o results/part3_dyna
 # Part 4
 python detect_video.py "PennAir 2024 App Dynamic Hard.mp4" --3d -o results/part4_dynamic_hard_3d.mp4
 
+# Part 6: tilt-aware 3D (the given videos are flat, so the HUD just says "plane: flat")
+python detect_video.py "PennAir 2024 App Dynamic Hard.mp4" --tilt -o results/part6_hard_tilt.mp4
+
+# Part 6 benchmark on synthetically tilted frames: markdown table, a still, and a sweep video
+python tools/tilt_benchmark.py
+python tools/tilt_benchmark.py --demo results/part6_tilt_demo.png
+python tools/tilt_benchmark.py --video results/part6_tilt_demo.mp4
+
 # sanity tests
 python tests/test_detector.py
+python tests/test_tilt.py
 ```
 
 `detect_video.py` reads frames one at a time and never looks ahead, so it behaves
@@ -55,9 +64,10 @@ nodes run exactly the same code as the scripts above.
 ## Layout
 
 ```
-shape_detector/     the algorithm (detector, tracker, 3D geometry, drawing)
+shape_detector/     the algorithm (detector, tracker, 3D geometry, tilted plane, drawing)
 detect_image.py     Part 1 CLI
-detect_video.py     Parts 2–4 CLI
+detect_video.py     Parts 2–4 (and 6 with --tilt) CLI
+tools/              Part 6 synthetic-tilt benchmark
 tests/              sanity tests
 results/            processed image / videos / gifs
 docs/REPORT.md      full write-up

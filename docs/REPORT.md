@@ -115,6 +115,37 @@ which is a plausible camera height.
 `shape_detector` package via a symlink so there's one copy of the algorithm.
 Written against the Jazzy docs but not built here (no ROS on this Mac).
 
-## Part 6
+## Part 6 – 3D on a tilted plane
 
-Skipped for now.
+Extends Part 4 to a camera that isn't looking straight down: the circle's
+ellipse gives the ground plane's normal, and shapes are located by intersecting
+their pixel rays with that plane (`shape_detector/plane.py`,
+`detect_video.py --tilt`). The README has the method, the benchmark table and
+the demo; notes on what went wrong along the way:
+
+- **Naive ratio = cos(tilt) overshoots by 5–6°.** The ratio actually depends on
+  the angle between the plane and the *ray to the circle*, and perspective
+  shear rotates the ellipse when the circle is off-axis (for a 20° tilt the
+  axes rotate by ~28°). Solved by modelling the ellipse covariance as
+  `A S Aᵀ` with the local projection Jacobian and grid-searching the normal.
+- **The asset isn't a circle.** It's 199×207 px on a top-down frame with square
+  pixels, i.e. 4% taller than wide, which reads as a 16° tilt. Pre-scaling the
+  image y axis fixed the top-down case but biased tilts about x; the correct
+  fix was to put the ellipse into the plane model (long axis along the plane's
+  y, i.e. no yaw assumed).
+- **Circularity breaks under foreshortening.** A 20° tilt about y made the
+  circle a "pentagon" and there was no reference left. The classifier now
+  measures the residual of contour points against their best-fit ellipse,
+  after densifying the contour (a `CHAIN_APPROX_SIMPLE` rectangle is 4 corners
+  and an ellipse fits those perfectly).
+- **Two solutions, not one.** Pose from one circle is two-fold ambiguous, and
+  off-axis the partner solution has a *different* tilt magnitude, so it isn't
+  just a sign. Both minima are enumerated; an external hint or a smaller-tilt
+  prior chooses. Documented rather than hidden.
+- **Synthesising the test data.** A pure camera rotation by 20° with this focal
+  length moves the scene ~900 px and out of frame; the right warp is an orbit
+  about the ground point on the optical axis, which for a plane is still an
+  exact homography. Ground truth for every shape follows from it.
+
+Result: tilt within 1° and direction within 1° for 10–40° tilts, 3D positions
+within ~1 in versus 6–23 in for the flat model.
