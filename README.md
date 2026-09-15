@@ -1,128 +1,112 @@
-# PennAir 2024 Application Challenge – Shape Detection
+# PennAir 2024 Application – Shape Detection
 
-Detects solid shapes on a textured background, traces their outlines, marks their
-centres, and (Part 4) estimates their 3D position from the camera. Plain OpenCV +
-NumPy, no pretrained models.
+This is my PennAir application challenge submission. It detects solid shapes on a
+textured background, traces their outlines, marks their centres, and estimates
+their 3D position relative to the camera. Plain OpenCV + NumPy, no pretrained
+models. Parts 1–5 are done; Part 6 is not attempted.
 
-| Part | What | Result |
-|---|---|---|
-| 1 | Static image | [`results/static_result.png`](results/static_result.png) |
-| 2 | Video, streamed frame by frame | [`results/part2_dynamic.mp4`](results/part2_dynamic.mp4) |
-| 3 | Background agnostic ("Hard" video) | [`results/part3_dynamic_hard.mp4`](results/part3_dynamic_hard.mp4) |
-| 4 | 3D centres (X, Y, Z in inches) | [`results/part4_dynamic_3d.mp4`](results/part4_dynamic_3d.mp4), [`results/part4_dynamic_hard_3d.mp4`](results/part4_dynamic_hard_3d.mp4) |
-| 5 | ROS2 nodes + launch file | [`ros2_ws/`](ros2_ws/) |
+## Results
 
-The write-up (approach, challenges, what was changed for speed / robustness) is in
-[`docs/REPORT.md`](docs/REPORT.md).
-
-## Quick look
-
-**Part 1** – static image
+**Part 1 – static image**
 
 ![static](results/static_result.png)
 
-**Part 2** – grass video (12 s excerpt, full video linked above)
+**Part 2 – video (grass)** · full video: [`results/part2_dynamic.mp4`](results/part2_dynamic.mp4)
 
 ![part2](results/gifs/part2_dynamic.gif)
 
-**Part 3** – gravel background + gradient-filled shapes, same code, no retuning
+**Part 3 – background agnostic (gravel + gradient-filled shapes)** · full video: [`results/part3_dynamic_hard.mp4`](results/part3_dynamic_hard.mp4)
 
 ![part3](results/gifs/part3_dynamic_hard.gif)
 
-**Part 4** – X/Y/Z in inches relative to the camera (depth from the 10 in circle)
+**Part 4 – 3D positions (X, Y, Z in inches)** · full videos: [`results/part4_dynamic_hard_3d.mp4`](results/part4_dynamic_hard_3d.mp4), [`results/part4_dynamic_3d.mp4`](results/part4_dynamic_3d.mp4)
 
 ![part4](results/gifs/part4_dynamic_hard_3d.gif)
 
-Green outline = shape fully visible on its own, orange outline = shape
+![part4 grass](results/gifs/part4_dynamic_3d.gif)
+
+Green outline = shape fully visible on its own. Orange outline = shape
 touching/overlapping another one or cut off by the frame edge (its outline and
-label are less trustworthy in that frame).
+label are less trustworthy in that frame). The fps counter is algorithm time
+only, on an M1 laptop.
 
-## How it works (short version)
+## Part 2 – video
 
-Every background in this challenge is *textured* (grass, gravel) while the shapes
-are flat or smoothly shaded. So the detector doesn't look for colours at all, it
-looks for **patches that are locally smooth**:
+**Approach.** The detector doesn't look for colours at all. Every background in
+the challenge is *textured* (grass, gravel) while the shapes are flat or smoothly
+shaded, so it looks for patches that are locally smooth:
 
 1. downscale to 960 px wide
-2. texture map = 9×9 box-mean of |Laplacian| (after a σ=1 Gaussian to kill codec noise).
-   A colour gradient has ~zero second derivative, so gradient-filled shapes still read as smooth.
-3. threshold at 0.3 × the frame's median texture (the median is basically "how textured is the background", so this self-tunes per frame)
+2. texture map = 9×9 box-mean of |Laplacian| (after a σ=1 Gaussian to kill codec noise)
+3. threshold at 0.3 × the frame's median texture. The median is basically "how textured is the background", so this self-tunes every frame
 4. open/close to clean up → blobs
-5. watershed seeded from the blobs to snap the outline back onto the real edge
+5. the blobs come out eroded by ~6 px because the texture window straddles the edge, so they're used as watershed markers and the watershed grows them back out to the real edge
 6. contours → centre (moments), rough label (polygon approximation), occlusion flag
 
-Video adds a tiny constant-velocity tracker for stable IDs, and Part 4 turns the
-circle's pixel radius into depth (`Z = f · 10 in / r_px`), then `X = u·Z/fx`, `Y = v·Z/fy`.
+`detect_video.py` pulls frames with `cap.read()` one at a time and never seeks
+or looks ahead, so the algorithm is the same one-frame function as Part 1 plus
+a small tracker that only remembers the past.
 
-~11–14 ms per 1080p frame on a laptop (≈70–90 fps algorithm-only), so it keeps up
-with the 30 fps videos with room to spare.
+**Performance and adjustments.** The first working version ran at ~30 ms/frame,
+right at the 30 fps budget with no margin. What changed:
 
-## Running it
+| change | ms/frame |
+|---|---|
+| float32 texture map, numpy channel sum | ~30 |
+| uint8/int16 pipeline, `cv2.transform` for the channel mean | ~16 |
+| histogram median instead of `np.median` (3 ms → 0.3 ms), separable (rectangular) dilation kernel | ~11–14 |
 
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+Everything runs at 960×540 and contours are scaled back to 1080p, which costs
+essentially nothing in outline accuracy. 640 px wide gives ~8 ms if it ever had
+to run on a weaker board.
 
-# Part 1
-python detect_image.py "PennAir 2024 App Static.png" -o results/static_result.png
+**Consistency across frames.** Shapes move ~30 px/frame (up to ~120 px), so a
+plain nearest-neighbour tracker mixed up IDs when shapes crossed. Two fixes:
 
-# Part 2 / 3  (add --show for a live window, q to quit)
-python detect_video.py "PennAir 2024 App Dynamic.mp4"      -o results/part2_dynamic.mp4
-python detect_video.py "PennAir 2024 App Dynamic Hard.mp4" -o results/part3_dynamic_hard.mp4
+- constant-velocity prediction: new detections are matched against where each track *should* be, and missing tracks coast along their velocity for a few frames
+- labels come from a majority vote over the last ~30 frames, and frames where the shape is touching another shape or cut off by the frame edge don't vote. A half-hidden pentagon looks like a trapezoid and a circle sliding in from the edge looks like a D; this stops them from being misnamed
 
-# Part 4
-python detect_video.py "PennAir 2024 App Dynamic Hard.mp4" --3d -o results/part4_dynamic_hard_3d.mp4
+**Overlap.** When two shapes overlap, the colour edge between them shows up in
+the texture map, so the watershed naturally splits them into two regions with a
+shared border. That's why overlapping shapes still get separate outlines and
+centres (drawn in orange). The occluded shape's centre is the centroid of its
+*visible* part, so it drifts toward the visible side; proper occlusion handling
+would need per-shape models (Part 6 territory).
 
-# sanity tests
-python tests/test_detector.py
-```
+## Part 3 – background agnostic
 
-`detect_video.py` reads frames one at a time and never looks ahead, so it behaves
-like a live camera feed. The videos it writes are raw `mp4v`; the ones in
-`results/` were re-encoded to H.264 with ffmpeg so they play in a browser.
+Nothing background-specific was ever in the code, so the same script runs on
+the "Hard" video with zero parameter changes. Getting there did take a few
+modifications:
 
-## Part 5 – ROS2
+- **Gradient-filled shapes.** The first texture measure was local standard deviation, which flags a steep colour gradient (the navy→yellow pentagon) as texture. Switching to the Laplacian fixed it: a linear ramp has zero second derivative no matter how steep it is, while gravel and grass have a lot.
+- **Codec noise inside gradients.** H.264 gradients aren't perfectly linear (banding), which leaked through at the fine scale. A σ=1 Gaussian before the Laplacian and a 9×9 mean after it were enough.
+- **Low-contrast edges.** The white→grey trapezoid's bottom edge is nearly the same brightness as the dark gravel and the watershed occasionally wanders a few pixels there. Limiting how far it may grow (a ~9 px band around each blob) keeps that bounded.
+- **Plain-colour backgrounds.** Not in the test data, but "agnostic" should cover it: if the frame's median texture is near zero the texture trick has nothing to work with, so the detector falls back to "differs from the dominant colour". Covered by `tests/test_detector.py`.
+- **Edge artefact.** The hard video has a thin smooth strip at its right edge which showed up as a false positive; a min-area and solidity (area / convex-hull area) filter removed it.
 
-Two nodes and a launch file live in `ros2_ws/src`:
+## Part 4 – 3D
 
-- `pennair_shapes_msgs` – `ShapeDetection` / `ShapeDetectionArray` messages (id, label, pixel centre, 3D position, outline polygon)
-- `pennair_shapes`
-  - `video_publisher` – streams a video file as `sensor_msgs/Image` on `camera/image_raw`
-  - `detector_node` – runs the same `shape_detector` package on each image, publishes `shapes/detections` and an annotated image on `shapes/image_annotated`
-  - `launch/shapes.launch.py` – runs both
+Intrinsics from the prompt: `fx = 2564.32`, `fy = 2569.70`, `cx = cy = 0`.
+`cx = cy = 0` is read as "pixel coordinates are measured from the image centre"
+(that's also what the reference video shows), so `u = x − W/2`, `v = y − H/2`.
 
-```bash
-# Ubuntu 24.04 + ROS 2 Jazzy (macOS: Ubuntu VM via UTM)
-sudo apt install ros-jazzy-cv-bridge python3-opencv python3-numpy
-cd ros2_ws
-colcon build --symlink-install
-source install/setup.bash
-ros2 launch pennair_shapes shapes.launch.py video:=/abs/path/PennAir\ 2024\ App\ Dynamic\ Hard.mp4 use_3d:=true
-
-# in another terminal
-ros2 topic echo /shapes/detections
-ros2 run rqt_image_view rqt_image_view /shapes/image_annotated
-```
-
-The ROS package pulls in the algorithm through a symlink
-(`ros2_ws/src/pennair_shapes/shape_detector → ../../../shape_detector`), so the
-nodes run exactly the same code as the scripts above.
-
-> Written against the ROS 2 Jazzy docs; this was developed on macOS without a ROS
-> install, so the package hasn't been built here yet.
-
-## Layout
+Depth comes from the circle, whose real radius is 10 in:
 
 ```
-shape_detector/     the algorithm (detector, tracker, 3D geometry, drawing)
-detect_image.py     Part 1 CLI
-detect_video.py     Parts 2–4 CLI
-tests/              sanity tests
-results/            processed image / videos / gifs
-docs/REPORT.md      write-up
-ros2_ws/            Part 5
+Z = fx · R / r_px          (r_px from cv2.minEnclosingCircle on the circle's contour)
+X = u · Z / fx
+Y = v · Z / fy
 ```
 
-Note: `PennAir 2024 App Dynamic.mp4` is 102 MB, over GitHub's file limit, so it's
-git-ignored (grab it from the challenge doc or use Git LFS). The other inputs are
-tracked.
+The surface is flat, so that one Z is applied to every shape. Z is smoothed
+with an EMA and only updated from an *unoccluded, unclipped* circle (a
+half-hidden circle has a bogus radius); when the circle is off-screen the last Z
+is held. For these videos Z works out to ~246–247 in, about 20.5 ft, which is a
+plausible camera height.
+
+---
+
+Run instructions, the ROS2 (Part 5) package, and the repo layout are in
+[`docs/RUNNING.md`](docs/RUNNING.md). The full write-up including Part 1
+details is in [`docs/REPORT.md`](docs/REPORT.md).
